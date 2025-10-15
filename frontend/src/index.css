@@ -1,0 +1,43 @@
+﻿@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom range slider styles */
+input[type="range"].slider {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+input[type="range"].slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #0ea5e9, #14b8a6);
+  cursor: pointer;
+  border: 2px solid #1e293b;
+  box-shadow: 0 0 10px rgba(14, 165, 233, 0.5);
+  transition: all 0.2s;
+}
+
+input[type="range"].slider::-webkit-slider-thumb:hover {
+  transform: scale(1.1);
+  box-shadow: 0 0 15px rgba(14, 165, 233, 0.7);
+}
+
+input[type="range"].slider::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #0ea5e9, #14b8a6);
+  cursor: pointer;
+  border: 2px solid #1e293b;
+  box-shadow: 0 0 10px rgba(14, 165, 233, 0.5);
+  transition: all 0.2s;
+}
+
+input[type="range"].slider::-moz-range-thumb:hover {
+  transform: scale(1.1);
+  box-shadow: 0 0 15px rgba(14, 165, 233, 0.7);
+}
