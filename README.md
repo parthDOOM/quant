@@ -181,13 +181,6 @@ Implements Engle-Granger cointegration testing to identify statistically arbitra
 
 Fetches live options chains and calculates implied volatility using Newton-Raphson numerical method on Black-Scholes-Merton formula. Visualizes IV across strike prices and expiration dates in interactive 3D space.
 
-## 📊 Project Status
-
-- **Phase 1 (HRP):** ✅ 100% Complete
-- **Phase 2 (StatArb):** ✅ 100% Complete
-- **Phase 3 (IV):** ✅ 95% Complete
-- **Tests:** 126/126 passing (100%)
-
 ## 🤝 Contributing
 
 Contributions, issues, and feature requests are welcome! Feel free to check the [issues page](https://github.com/parthDOOM/quant/issues).
