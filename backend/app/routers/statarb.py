@@ -7,7 +7,8 @@ Provides endpoints for:
 - Analyzing spread dynamics and generating trading signals
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi_cache.decorator import cache
 from typing import List
 import pandas as pd
 import itertools
@@ -27,13 +28,35 @@ from app.models.statarb import (
 )
 from app.services.cointegration import CointegrationService
 from app.services.data_ingestion import fetch_prices
+from app.services.provider_interface import DataProviderInterface
+from app.services.provider_factory import get_data_provider
 
 router = APIRouter(tags=["Statistical Arbitrage"])
 logger = logging.getLogger(__name__)
 
 
+def find_pairs_cache_key_builder(
+    func,
+    namespace: str = "",
+    *args,
+    **kwargs
+):
+    """
+    Custom cache key builder for find-pairs endpoint.
+    Includes request body (tickers, dates, threshold) in cache key.
+    """
+    request = kwargs.get("request")
+    if request:
+        tickers_str = ",".join(sorted(request.tickers))
+        return f"{namespace}:{func.__name__}:{tickers_str}:{request.start_date}:{request.end_date}:{request.p_value_threshold}"
+    return f"{namespace}:{func.__name__}"
+
+
 @router.post("/test-pair", response_model=CointResult)
-async def test_pair_cointegration(request: PairTestRequest) -> CointResult:
+async def test_pair_cointegration(
+    request: PairTestRequest,
+    provider: DataProviderInterface = Depends(get_data_provider)
+) -> CointResult:
     """
     Test cointegration between two assets using Engle-Granger methodology.
 
@@ -57,10 +80,11 @@ async def test_pair_cointegration(request: PairTestRequest) -> CointResult:
         logger.info(f"Testing cointegration: {request.ticker_a} vs {request.ticker_b}")
 
         # Fetch price data for both assets
-        prices_df = fetch_prices(
+        prices_df = await fetch_prices(
             [request.ticker_a, request.ticker_b],
             request.start_date,
-            request.end_date
+            request.end_date,
+            provider
         )
 
         if prices_df.empty or request.ticker_a not in prices_df.columns or request.ticker_b not in prices_df.columns:
@@ -91,7 +115,11 @@ async def test_pair_cointegration(request: PairTestRequest) -> CointResult:
 
 
 @router.post("/find-pairs", response_model=FindPairsResponse)
-async def find_pairs(request: FindPairsRequest) -> FindPairsResponse:
+@cache(expire=1800, key_builder=find_pairs_cache_key_builder)  # Cache for 30 minutes
+async def find_pairs(
+    request: FindPairsRequest,
+    provider: DataProviderInterface = Depends(get_data_provider)
+) -> FindPairsResponse:
     """
     Find all cointegrated pairs within a group of assets.
 
@@ -120,10 +148,11 @@ async def find_pairs(request: FindPairsRequest) -> FindPairsResponse:
         logger.info(f"Testing {total_combinations} unique pairs")
 
         # Fetch price data for all tickers at once
-        all_prices = fetch_prices(
+        all_prices = await fetch_prices(
             request.tickers,
             request.start_date,
-            request.end_date
+            request.end_date,
+            provider
         )
 
         if all_prices.empty:
@@ -197,7 +226,10 @@ async def find_pairs(request: FindPairsRequest) -> FindPairsResponse:
 
 
 @router.post("/spread-analysis", response_model=SpreadAnalysisResponse)
-async def analyze_spread(request: SpreadAnalysisRequest) -> SpreadAnalysisResponse:
+async def analyze_spread(
+    request: SpreadAnalysisRequest,
+    provider: DataProviderInterface = Depends(get_data_provider)
+) -> SpreadAnalysisResponse:
     """
     Analyze spread dynamics and generate trading signals for a cointegrated pair.
 
@@ -221,10 +253,11 @@ async def analyze_spread(request: SpreadAnalysisRequest) -> SpreadAnalysisRespon
         logger.info(f"Analyzing spread: {request.ticker_a} vs {request.ticker_b}")
 
         # Fetch price data
-        prices_df = fetch_prices(
+        prices_df = await fetch_prices(
             [request.ticker_a, request.ticker_b],
             request.start_date,
-            request.end_date
+            request.end_date,
+            provider
         )
 
         if prices_df.empty or request.ticker_a not in prices_df.columns or request.ticker_b not in prices_df.columns:

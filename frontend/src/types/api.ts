@@ -128,3 +128,53 @@ export interface AnalysisState {
   error: string | null;
   data: HRPResponse | null;
 }
+
+// Monte Carlo Simulation Types
+export interface MonteCarloRequest {
+  tickers: string[];
+  start_date: string;
+  end_date: string;
+  num_simulations: number;
+  num_days: number;
+  weighting?: 'equal' | 'min_var';
+}
+
+export interface AssetStatistics {
+  mean: number;
+  std: number;
+  percentile_5: number;
+  percentile_50: number;
+  percentile_95: number;
+}
+
+export interface PortfolioStatistics {
+  mean: number;
+  std: number;
+  percentile_5: number;
+  percentile_25: number;
+  percentile_50: number;
+  percentile_75: number;
+  percentile_95: number;
+  min: number;
+  max: number;
+}
+
+export interface MonteCarloResponse {
+  tickers: string[];
+  num_simulations: number;
+  num_days: number;
+  portfolio_statistics: PortfolioStatistics;
+  asset_statistics: Record<string, AssetStatistics>;
+  sample_paths: number[][];
+  final_value_distribution: number[];
+  execution_time_ms: number;
+  portfolio_weights?: number[];
+  debug_inputs?: {
+     mean_returns: number[];
+     cov_matrix: number[][];
+     initial_prices: number[];
+     portfolio_weights: number[];
+     raw_prices?: Record<string, number[]>; // Added for debugging data pipeline
+  };
+}
+

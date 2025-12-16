@@ -145,3 +145,5 @@ datasets/
 # OS
 Thumbs.db
 Desktop.ini
+
+eigen-3.4.0/

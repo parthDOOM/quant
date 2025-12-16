@@ -1,6 +1,7 @@
 """
 Data ingestion and processing service for financial market data.
 Handles fetching historical prices and calculating returns and correlations.
+Supports multiple data providers (Polygon.io, yfinance) with automatic fallback.
 """
 import pandas as pd
 import numpy as np
@@ -10,6 +11,7 @@ from datetime import datetime
 import logging
 
 from app.config import get_settings
+from app.services.provider_interface import DataProviderInterface
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -25,10 +27,11 @@ class InsufficientDataError(Exception):
     pass
 
 
-def fetch_and_process_prices(
+async def fetch_and_process_prices(
     tickers: List[str],
     start_date: str,
-    end_date: str
+    end_date: str,
+    provider: DataProviderInterface
 ) -> pd.DataFrame:
     """
     Fetch historical adjusted closing prices and calculate daily returns.
@@ -45,84 +48,20 @@ def fetch_and_process_prices(
         DataIngestionError: If data fetching fails
         InsufficientDataError: If insufficient data is available
     """
-    logger.info(f"Fetching data for {len(tickers)} tickers from {start_date} to {end_date}")
+    logger.info(f"Fetching data for {len(tickers)} tickers from {start_date} to {end_date} using {provider.name}")
     
     try:
-        # Download data for all tickers
-        # Note: auto_adjust=False to get 'Adj Close' column (yfinance 0.2.66+)
-        data = yf.download(
+        # Fetch data via provider interface (async call)
+        # Provider returns DataFrame with tickers as columns, dates as index (adjusted close prices)
+        prices = await provider.get_historical_prices(
             tickers=tickers,
-            start=start_date,
-            end=end_date,
-            progress=False,
-            threads=True,
-            group_by='ticker',
-            auto_adjust=False  # Important: Keep Adj Close column
+            start_date=start_date,
+            end_date=end_date
         )
-        
-        if data.empty:
-            raise InsufficientDataError(
-                f"No data available for the specified tickers and date range"
-            )
-        
-        # Extract price data - yfinance 0.2.66+ returns multi-level columns even for single ticker
-        prices = pd.DataFrame()
-        
-        # Check if we have multi-level columns
-        if isinstance(data.columns, pd.MultiIndex):
-            # Multi-level columns: (Ticker, Price) structure
-            for ticker in tickers:
-                try:
-                    # Check if ticker exists in the data (level 0)
-                    if ticker in data.columns.get_level_values(0):
-                        # Try Adj Close first
-                        if (ticker, 'Adj Close') in data.columns:
-                            ticker_data = data[(ticker, 'Adj Close')]
-                        elif (ticker, 'Close') in data.columns:
-                            # Fallback to Close
-                            ticker_data = data[(ticker, 'Close')]
-                        else:
-                            logger.warning(f"No price data for ticker: {ticker}")
-                            continue
-                        prices[ticker] = ticker_data
-                    else:
-                        logger.warning(f"No data available for ticker: {ticker}")
-                except (KeyError, AttributeError) as e:
-                    logger.warning(f"Error extracting data for {ticker}: {str(e)}")
-                    continue
-        else:
-            # Single-level columns (legacy yfinance or single ticker in older versions)
-            if len(tickers) == 1:
-                if 'Adj Close' in data.columns:
-                    prices = pd.DataFrame(data['Adj Close'])
-                    prices.columns = [tickers[0]]
-                elif 'Close' in data.columns:
-                    prices = pd.DataFrame(data['Close'])
-                    prices.columns = [tickers[0]]
-                else:
-                    raise DataIngestionError(f"No price data found for ticker {tickers[0]}")
-            else:
-                # This shouldn't happen with current yfinance, but keep for compatibility
-                for ticker in tickers:
-                    try:
-                        if ticker in data.columns.get_level_values(0):
-                            if 'Adj Close' in data[ticker].columns:
-                                ticker_data = data[ticker]['Adj Close']
-                            elif 'Close' in data[ticker].columns:
-                                ticker_data = data[ticker]['Close']
-                            else:
-                                logger.warning(f"No price data for ticker: {ticker}")
-                                continue
-                            prices[ticker] = ticker_data
-                        else:
-                            logger.warning(f"No data available for ticker: {ticker}")
-                    except (KeyError, AttributeError) as e:
-                        logger.warning(f"Error extracting data for {ticker}: {str(e)}")
-                        continue
         
         if prices.empty:
             raise InsufficientDataError(
-                "No valid price data could be extracted for any ticker"
+                f"No data available for the specified tickers and date range"
             )
         
         # Drop columns with all NaN values
@@ -203,10 +142,11 @@ def calculate_correlation_matrix(
     return correlation_matrix
 
 
-def get_correlation_data(
+async def get_correlation_data(
     tickers: List[str],
     start_date: str,
-    end_date: str
+    end_date: str,
+    provider: DataProviderInterface
 ) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str, any]]:
     """
     High-level function to fetch data and calculate correlation matrix.
@@ -215,6 +155,7 @@ def get_correlation_data(
         tickers: List of ticker symbols
         start_date: Start date in YYYY-MM-DD format
         end_date: End date in YYYY-MM-DD format
+        provider: Data provider instance (Polygon, yfinance, or Fallback)
         
     Returns:
         Tuple of (returns_df, correlation_matrix, metadata)
@@ -224,7 +165,7 @@ def get_correlation_data(
         InsufficientDataError: If insufficient data is available
     """
     # Fetch and process price data
-    returns = fetch_and_process_prices(tickers, start_date, end_date)
+    returns = await fetch_and_process_prices(tickers, start_date, end_date, provider)
     
     # Calculate correlation matrix
     correlation_matrix = calculate_correlation_matrix(returns)
@@ -245,10 +186,11 @@ def get_correlation_data(
     return returns, correlation_matrix, metadata
 
 
-def validate_tickers_data_availability(
+async def validate_tickers_data_availability(
     tickers: List[str],
     start_date: str,
-    end_date: str
+    end_date: str,
+    provider: DataProviderInterface
 ) -> Dict[str, bool]:
     """
     Check which tickers have data available for the given date range.
@@ -258,6 +200,7 @@ def validate_tickers_data_availability(
         tickers: List of ticker symbols
         start_date: Start date in YYYY-MM-DD format
         end_date: End date in YYYY-MM-DD format
+        provider: Data provider instance (Polygon, yfinance, or Fallback)
         
     Returns:
         Dictionary mapping ticker to availability (True/False)
@@ -266,13 +209,12 @@ def validate_tickers_data_availability(
     
     for ticker in tickers:
         try:
-            data = yf.download(
-                ticker,
-                start=start_date,
-                end=end_date,
-                progress=False
+            data = await provider.get_historical_prices(
+                [ticker],
+                start_date,
+                end_date
             )
-            availability[ticker] = not data.empty and 'Adj Close' in data.columns
+            availability[ticker] = not data.empty
         except Exception as e:
             logger.warning(f"Error checking {ticker}: {str(e)}")
             availability[ticker] = False
@@ -280,10 +222,11 @@ def validate_tickers_data_availability(
     return availability
 
 
-def fetch_prices(
+async def fetch_prices(
     tickers: List[str],
     start_date: str,
-    end_date: str
+    end_date: str,
+    provider: DataProviderInterface
 ) -> pd.DataFrame:
     """
     Fetch historical adjusted closing prices (without calculating returns).
@@ -296,6 +239,7 @@ def fetch_prices(
         tickers: List of ticker symbols
         start_date: Start date in YYYY-MM-DD format
         end_date: End date in YYYY-MM-DD format
+        provider: Data provider instance (Polygon, yfinance, or Fallback)
         
     Returns:
         DataFrame with daily adjusted closing prices (tickers as columns, dates as index)
@@ -304,54 +248,19 @@ def fetch_prices(
         DataIngestionError: If data fetching fails
         InsufficientDataError: If insufficient data is available
     """
-    logger.info(f"Fetching price data for {len(tickers)} tickers from {start_date} to {end_date}")
+    logger.info(f"Fetching price data for {len(tickers)} tickers from {start_date} to {end_date} using {provider.name}")
     
     try:
-        # Download data for all tickers
-        data = yf.download(
+        # Fetch data via provider interface (async call)
+        prices = await provider.get_historical_prices(
             tickers=tickers,
-            start=start_date,
-            end=end_date,
-            progress=False,
-            threads=True,
-            group_by='ticker',
-            auto_adjust=False
+            start_date=start_date,
+            end_date=end_date
         )
-        
-        if data.empty:
-            raise InsufficientDataError(
-                f"No data returned for tickers: {tickers}"
-            )
-        
-        # Extract adjusted closing prices
-        prices = pd.DataFrame()
-        
-        if len(tickers) == 1:
-            # Single ticker case
-            ticker = tickers[0]
-            if 'Adj Close' in data.columns:
-                prices[ticker] = data['Adj Close']
-            elif 'Close' in data.columns:
-                prices[ticker] = data['Close']
-            else:
-                raise DataIngestionError(f"No price data found for ticker {ticker}")
-        else:
-            # Multiple tickers
-            for ticker in tickers:
-                try:
-                    if ticker in data.columns.get_level_values(0):
-                        if 'Adj Close' in data[ticker].columns:
-                            prices[ticker] = data[ticker]['Adj Close']
-                        elif 'Close' in data[ticker].columns:
-                            prices[ticker] = data[ticker]['Close']
-                        else:
-                            logger.warning(f"No price data for ticker: {ticker}")
-                except (KeyError, AttributeError) as e:
-                    logger.warning(f"Error extracting data for {ticker}: {str(e)}")
         
         if prices.empty:
             raise InsufficientDataError(
-                "No valid price data could be extracted for any ticker"
+                f"No data returned for tickers: {tickers}"
             )
         
         # Drop columns with all NaN values

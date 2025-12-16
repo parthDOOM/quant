@@ -35,6 +35,10 @@ class Settings(BaseSettings):
         """Parse CORS origins from comma-separated string."""
         return [origin.strip() for origin in self.cors_origins.split(",")]
     
+    # Data Providers
+    polygon_api_key: str = ""
+    data_provider: str = "auto"  # Options: polygon, yfinance, auto
+    
     # Redis
     redis_host: str = "localhost"
     redis_port: int = 6379

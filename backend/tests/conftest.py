@@ -3,6 +3,8 @@ Pytest configuration and fixtures.
 """
 import pytest
 from fastapi.testclient import TestClient
+from fastapi_cache import FastAPICache
+from fastapi_cache.backends.inmemory import InMemoryBackend
 
 from app.main import app
 from app.config import get_settings
@@ -11,6 +13,8 @@ from app.config import get_settings
 @pytest.fixture
 def client():
     """Create a test client for the FastAPI app."""
+    # Initialize cache for tests with in-memory backend (no Redis needed)
+    FastAPICache.init(InMemoryBackend(), prefix="test-cache:")
     return TestClient(app)
 
 

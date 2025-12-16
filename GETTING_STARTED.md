@@ -7,6 +7,7 @@ Complete setup and quickstart guide for the Quantitative Strategy & Risk Dashboa
 - **Python:** 3.10 or higher
 - **Node.js:** 16 or higher  
 - **npm:** 7 or higher
+- **Docker:** For Redis (or Redis installed locally)
 - **OS:** Windows (tested), macOS/Linux (should work)
 
 ## Installation
@@ -18,7 +19,28 @@ git clone <repository-url>
 cd quant
 ```
 
-### 2. Backend Setup
+### 2. Redis Setup
+
+Redis is required for caching. Install and run using Docker:
+
+```powershell
+# Pull Redis image
+docker pull redis:7-alpine
+
+# Start Redis container
+docker run -d --name quant-redis -p 6379:6379 redis:7-alpine
+
+# Verify Redis is running
+docker ps --filter name=quant-redis
+# You should see the container with STATUS "Up"
+```
+
+**Without Docker:**
+- Download Redis from https://redis.io/download
+- Install and start Redis server on port 6379
+- Windows: Use WSL or Redis for Windows (unofficial)
+
+### 3. Backend Setup
 
 ```powershell
 # Navigate to backend
@@ -39,11 +61,39 @@ source .venv/bin/activate
 # Install dependencies
 pip install -r requirements.txt
 
-# Verify installation
-pytest  # Should show 126/126 tests passing
+# Configure environment
+Copy-Item .env.example .env
+# Edit .env with your Polygon API key and settings
 ```
 
-### 3. Frontend Setup
+**Configure `.env` file:**
+
+```properties
+# Data Provider (Polygon.io API key)
+POLYGON_API_KEY=your_polygon_api_key_here
+DATA_PROVIDER=auto  # Options: polygon, yfinance, auto
+
+# Redis
+REDIS_URL=redis://localhost:6379
+
+# Security (change in production)
+SECRET_KEY=your-secret-key-change-this-in-production
+```
+
+**Getting a Polygon API Key:**
+1. Sign up at https://polygon.io/
+2. Free tier: 5 requests/minute
+3. Copy API key from dashboard
+4. Add to `.env` file
+
+**Note:** Without Polygon API key, system will use yfinance as fallback.
+
+```powershell
+# Verify installation
+pytest  # Should show tests passing
+```
+
+### 4. Frontend Setup
 
 ```powershell
 # Navigate to frontend (from project root)

@@ -9,7 +9,9 @@ import type {
   FindPairsRequest,
   FindPairsResponse,
   SpreadAnalysisRequest,
-  SpreadAnalysisResponse
+  SpreadAnalysisResponse,
+  MonteCarloRequest,
+  MonteCarloResponse,
 } from '../types/api';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -109,4 +111,16 @@ export const statArbApi = {
   },
 };
 
+// Monte Carlo Simulation API
+export const monteCarloAPI = {
+  /**
+   * Run Monte Carlo simulation (C++ accelerated)
+   */
+  async simulate(request: MonteCarloRequest): Promise<MonteCarloResponse> {
+    const response = await api.post<MonteCarloResponse>('/monte-carlo/simulate', request);
+    return response.data;
+  },
+};
+
 export default api;
+

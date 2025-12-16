@@ -1,11 +1,15 @@
 """
 Main FastAPI application entry point.
 """
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
+from fastapi_cache import FastAPICache
+from fastapi_cache.backends.redis import RedisBackend
+from redis import asyncio as aioredis
 import logging
 import time
 
@@ -21,7 +25,49 @@ logger = logging.getLogger(__name__)
 # Get settings
 settings = get_settings()
 
-# Create FastAPI application
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Lifespan context manager for startup and shutdown events.
+    Handles initialization and cleanup of Redis cache and other resources.
+    """
+    # Startup: Initialize Redis cache
+    logger.info(f"Starting {settings.app_name} v{settings.app_version}")
+    logger.info(f"Environment: {settings.environment}")
+    logger.info(f"Debug mode: {settings.debug}")
+    
+    try:
+        # Initialize Redis connection
+        redis = await aioredis.from_url(
+            "redis://localhost:6379",
+            encoding="utf-8",
+            decode_responses=True
+        )
+        
+        # Initialize FastAPICache with Redis backend
+        FastAPICache.init(RedisBackend(redis), prefix="fastapi-cache:")
+        
+        logger.info("✅ Redis cache initialized successfully")
+        logger.info("   Host: localhost:6379")
+        logger.info("   Cache prefix: fastapi-cache:")
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize Redis cache: {str(e)}")
+        logger.warning("⚠️  Application will run without caching")
+    
+    yield
+    
+    # Shutdown: Clean up resources
+    logger.info("Shutting down application")
+    try:
+        await redis.close()
+        logger.info("✅ Redis connections closed")
+    except Exception as e:
+        logger.error(f"Error closing Redis connections: {str(e)}")
+
+
+# Create FastAPI application with lifespan
 app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
@@ -29,6 +75,7 @@ app = FastAPI(
                 "statistical arbitrage, and options risk assessment.",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 # Add CORS middleware
@@ -165,22 +212,7 @@ async def global_exception_handler(request: Request, exc: Exception):
         )
 
 
-@app.on_event("startup")
-async def startup_event():
-    """Initialize resources on application startup."""
-    logger.info(f"Starting {settings.app_name} v{settings.app_version}")
-    logger.info(f"Environment: {settings.environment}")
-    logger.info(f"Debug mode: {settings.debug}")
-    # TODO: Initialize Redis connection pool
-    # TODO: Initialize database connection
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Clean up resources on application shutdown."""
-    logger.info("Shutting down application")
-    # TODO: Close Redis connections
-    # TODO: Close database connections
+# Startup/shutdown events moved to lifespan context manager above
 
 
 @app.get("/")
@@ -206,11 +238,12 @@ async def health_check():
 
 
 # Include routers
-from app.routers import hrp, statarb, iv_surface
+from app.routers import hrp, statarb, iv_surface, monte_carlo
 
 app.include_router(hrp.router, prefix="/hrp", tags=["HRP Analysis"])
 app.include_router(statarb.router, prefix="/stat-arb", tags=["Statistical Arbitrage"])
 app.include_router(iv_surface.router, tags=["Implied Volatility Surface"])
+app.include_router(monte_carlo.router, tags=["Monte Carlo Simulation"])
 
 
 if __name__ == "__main__":

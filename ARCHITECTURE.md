@@ -29,6 +29,87 @@ graph LR
 
 ## Backend Architecture
 
+### Part 1: Infrastructure Layer (COMPLETED)
+
+#### Provider Abstraction Architecture
+
+```
+API Endpoint
+  ↓
+DataProviderInterface (ABC)
+  ├─ PolygonProvider (primary, ~323 lines)
+  │   └─ Polygon.io institutional-grade data
+  ├─ YfinanceProvider (fallback, ~254 lines)
+  │   └─ Yahoo Finance backup provider
+  └─ FallbackDataProvider (orchestrator, ~252 lines)
+      └─ Automatic primary→fallback switching
+```
+
+**Files:**
+- `app/services/provider_interface.py` - Abstract interface and fallback logic (252 lines)
+- `app/services/polygon_provider.py` - Polygon.io implementation (323 lines)
+- `app/services/yfinance_provider.py` - yfinance implementation (254 lines)
+- `app/services/provider_factory.py` - Factory pattern with DI (141 lines)
+- **Total:** ~970 lines of abstraction code
+
+**Features:**
+- Automatic fallback on provider errors
+- Rate limit handling
+- Comprehensive error logging
+- FastAPI dependency injection
+
+#### Redis Caching Layer
+
+**Implementation:**
+- FastAPICache with RedisBackend (redis:7-alpine)
+- Lifespan context manager for initialization
+- Custom cache key builders for POST requests
+- Parameter-aware keys (include request body in cache key)
+
+**Cache TTLs by Endpoint:**
+- HRP correlation/analyze: 60 minutes (longer data validity)
+- StatArb find-pairs: 30 minutes (computationally expensive)
+- IV Surface: 15 minutes (options data changes frequently)
+
+**Files Modified:**
+- `app/main.py` - Lifespan context manager
+- `app/routers/hrp.py` - Cache decorators and key builders
+- `app/routers/statarb.py` - Cache decorators
+- `app/routers/iv_surface.py` - Cache decorators
+
+**Cache Key Builder Example:**
+```python
+def correlation_cache_key_builder(func, namespace: str = "", *args, **kwargs):
+    request = kwargs.get("request")
+    if request:
+        tickers_str = ",".join(sorted(request.tickers))
+        return f"{namespace}:{func.__name__}:{tickers_str}:{request.start_date}:{request.end_date}"
+    return f"{namespace}:{func.__name__}"
+```
+
+#### Dynamic Economic Data Service
+
+**File:** `app/services/economic_data.py` (177 lines)
+
+**Purpose:** Fetch 3-Month Treasury Bill rate from U.S. Treasury FiscalData API
+
+**Functions:**
+- `get_risk_free_rate()` - Fetch with 12-hour in-memory cache
+- `get_risk_free_rate_with_fallback()` - Safe wrapper with 4.5% fallback
+
+**Integration:** 
+- Used by `options_data.py` for Black-Scholes calculations
+- Replaces hardcoded risk-free rate
+- Current rate: ~4.187% (October 2025)
+
+**API Endpoint:**
+```
+https://api.fiscaldata.treasury.gov/services/api/fiscal_service/
+v2/accounting/od/avg_interest_rates
+```
+
+---
+
 ### FastAPI Application Structure
 
 ```
@@ -45,27 +126,45 @@ backend/
 │   │   ├── statarb.py        # StatArb routes
 │   │   └── iv.py             # IV routes
 │   └── services/              # Business logic
-│       ├── data_ingestion.py       # Market data fetching
-│       ├── hrp_clustering.py       # Hierarchical clustering
-│       ├── cointegration.py        # Engle-Granger testing
-│       ├── options_data.py         # Options chain fetching
-│       └── iv_calculator.py        # Black-Scholes + Newton-Raphson
-├── tests/                     # Test suite (126 tests)
+│       ├── provider_interface.py      # Provider abstraction (252 lines)
+│       ├── polygon_provider.py        # Polygon.io implementation (323 lines)
+│       ├── yfinance_provider.py       # yfinance implementation (254 lines)
+│       ├── provider_factory.py        # Factory pattern (141 lines)
+│       ├── economic_data.py           # Dynamic risk-free rate (177 lines)
+│       ├── data_ingestion.py          # Market data fetching
+│       ├── hrp_clustering.py          # Hierarchical clustering
+│       ├── cointegration.py           # Engle-Granger testing
+│       ├── options_data.py            # Options chain fetching
+│       └── iv_calculator.py           # Black-Scholes + Newton-Raphson
+├── tests/                     # Test suite
 │   ├── unit/                 # Unit tests
-│   ├── integration/          # API integration tests
+│   ├── integration/          # API integration tests (11/13 passing)
+│   │   └── test_providers_caching_integration.py  # Part 1 tests
 │   └── validation/           # Mathematical validation tests
 └── scripts/                   # Manual testing scripts
+    └── archive/              # Archived temporary scripts
 ```
 
 ### Key Components
 
+#### 0. Provider Abstraction Layer (NEW - Part 1)
+- **Files:** `provider_interface.py`, `polygon_provider.py`, `yfinance_provider.py`, `provider_factory.py`
+- **Purpose:** Abstract data provider with automatic fallback
+- **Total Lines:** ~970 lines
+- **Features:**
+  - Primary: Polygon.io (institutional-grade options data)
+  - Fallback: yfinance (backup provider)
+  - Automatic error handling and retry logic
+  - FastAPI dependency injection
+
 #### 1. Data Ingestion Service
 - **File:** `app/services/data_ingestion.py`
-- **Purpose:** Fetch historical price data from yfinance
+- **Purpose:** Fetch historical price data using provider abstraction
 - **Functions:**
   - `fetch_and_process_prices()` - Get adjusted close prices
   - `calculate_correlation_matrix()` - Pearson correlation
   - `fetch_prices()` - Helper for StatArb
+- **Integration:** Uses DataProviderInterface via dependency injection
 
 #### 2. HRP Clustering Service
 - **File:** `app/services/hrp_clustering.py`
@@ -87,12 +186,21 @@ backend/
 
 #### 4. Options Data Service
 - **File:** `app/services/options_data.py`
-- **Purpose:** Fetch options chain from yfinance
+- **Purpose:** Fetch options chain using provider abstraction
 - **Functions:**
   - `fetch_options_chain()` - Get all options contracts
-  - `get_risk_free_rate()` - Fetch 10-year Treasury rate
+  - Uses `economic_data.get_risk_free_rate_with_fallback()` for dynamic rate
 
-#### 5. IV Calculator Service
+#### 5. Economic Data Service (NEW - Part 1)
+- **File:** `app/services/economic_data.py`
+- **Purpose:** Dynamic risk-free rate from U.S. Treasury API
+- **Functions:**
+  - `get_risk_free_rate()` - Fetch 3-Month T-Bill rate
+  - 12-hour in-memory cache
+  - Fallback to 4.5% on API failure
+- **Current Rate:** ~4.187% (October 2025)
+
+#### 6. IV Calculator Service
 - **File:** `app/services/iv_calculator.py`
 - **Purpose:** Black-Scholes-Merton pricing and IV solving
 - **Functions:**

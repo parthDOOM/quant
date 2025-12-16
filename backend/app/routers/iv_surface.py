@@ -5,7 +5,8 @@ Provides endpoints for fetching and calculating implied volatility surface data
 for options chains. Used by the frontend 3D visualization.
 """
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
+from fastapi_cache.decorator import cache
 from typing import Optional, Literal
 import logging
 import pandas as pd
@@ -19,6 +20,8 @@ from app.models.iv_surface import (
 )
 from app.services.options_data import OptionsDataService
 from app.services.implied_volatility import ImpliedVolatilityCalculator
+from app.services.provider_interface import DataProviderInterface
+from app.services.provider_factory import get_options_provider
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +33,24 @@ router = APIRouter(
         500: {"model": IVSurfaceError, "description": "Internal server error"}
     }
 )
+
+
+def iv_surface_cache_key_builder(
+    func,
+    namespace: str = "",
+    request: Optional[object] = None,
+    response: Optional[object] = None,
+    *args,
+    **kwargs
+):
+    """
+    Custom cache key builder for IV surface endpoint.
+    Includes ticker and query parameters in cache key.
+    """
+    ticker = kwargs.get("ticker", "")
+    expiration_filter = kwargs.get("expiration_filter", "first")
+    min_volume = kwargs.get("min_volume", 10)
+    return f"{namespace}:{func.__name__}:{ticker}:{expiration_filter}:{min_volume}"
 
 
 def _filter_by_expiration(
@@ -213,8 +234,10 @@ def _dataframe_to_contracts(df: pd.DataFrame) -> list[OptionContractIV]:
         "Newton-Raphson solver, and returns data suitable for 3D surface visualization."
     )
 )
+@cache(expire=900, key_builder=iv_surface_cache_key_builder)  # Cache for 15 minutes
 async def get_iv_surface(
     ticker: str,
+    provider: DataProviderInterface = Depends(get_options_provider),
     expiration_filter: Literal['first', 'near_term', 'all'] = Query(
         default='first',
         description=(
@@ -251,7 +274,7 @@ async def get_iv_surface(
     try:
         # Step 1: Fetch options chain
         logger.info(f"Fetching options chain for {ticker}...")
-        options_data = OptionsDataService.fetch_options_chain(ticker)
+        options_data = await OptionsDataService.fetch_options_chain(ticker, provider)
         
         spot_price = options_data['spot_price']
         risk_free_rate = options_data['risk_free_rate']

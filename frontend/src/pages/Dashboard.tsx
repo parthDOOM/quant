@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { Layers, TrendingUp, BarChart3, ArrowRight } from 'lucide-react';
+import { Layers, TrendingUp, BarChart3, Activity, ArrowRight } from 'lucide-react';
 import { cn } from '../utils/cn';
 
 const modules = [
@@ -46,6 +46,21 @@ const modules = [
       'Volatility smile analysis',
       'ATM IV tracking',
       'Put-call skew metrics',
+    ],
+  },
+  {
+    id: 'monte-carlo',
+    name: 'Monte Carlo Simulation',
+    description: 'High-performance portfolio simulation using C++ engine (9-11x faster) ⚡',
+    icon: Activity,
+    href: '/monte-carlo',
+    color: 'from-purple-500 to-indigo-600',
+    available: true,
+    features: [
+      'C++ accelerated (9-11x)',
+      'Cholesky decomposition',
+      'OpenMP parallelized',
+      'Geometric Brownian Motion',
     ],
   },
 ];

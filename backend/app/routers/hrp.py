@@ -1,9 +1,11 @@
 """
 API router for Hierarchical Risk Parity (HRP) analysis endpoints.
 """
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Depends, Request
+from fastapi_cache.decorator import cache
 from typing import List
 import logging
+import json
 
 from app.models.hrp import (
     CorrelationRequest,
@@ -21,10 +23,29 @@ from app.services.hrp_clustering import (
     correlation_matrix_to_heatmap_data,
     HRPClusteringError
 )
+from app.services.provider_interface import DataProviderInterface
+from app.services.provider_factory import get_data_provider
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def correlation_cache_key_builder(
+    func,
+    namespace: str = "",
+    *args,
+    **kwargs
+):
+    """
+    Custom cache key builder for correlation endpoint.
+    Includes request body (tickers, dates) in cache key.
+    """
+    request = kwargs.get("request")
+    if request:
+        tickers_str = ",".join(sorted(request.tickers))
+        return f"{namespace}:{func.__name__}:{tickers_str}:{request.start_date}:{request.end_date}"
+    return f"{namespace}:{func.__name__}"
 
 
 @router.post(
@@ -34,7 +55,11 @@ router = APIRouter()
     summary="Calculate Correlation Matrix",
     description="Fetch historical price data and calculate the Pearson correlation matrix for given tickers"
 )
-async def calculate_correlation(request: CorrelationRequest) -> CorrelationResponse:
+@cache(expire=3600, key_builder=correlation_cache_key_builder)  # Cache for 1 hour
+async def calculate_correlation(
+    request: CorrelationRequest,
+    provider: DataProviderInterface = Depends(get_data_provider)
+) -> CorrelationResponse:
     """
     Calculate correlation matrix for the given tickers and date range.
     
@@ -63,10 +88,11 @@ async def calculate_correlation(request: CorrelationRequest) -> CorrelationRespo
     
     try:
         # Fetch data and calculate correlation
-        returns, correlation_matrix, metadata = get_correlation_data(
+        returns, correlation_matrix, metadata = await get_correlation_data(
             tickers=request.tickers,
             start_date=request.start_date,
-            end_date=request.end_date
+            end_date=request.end_date,
+            provider=provider
         )
         
         # Convert correlation matrix to list of lists
@@ -109,6 +135,23 @@ async def calculate_correlation(request: CorrelationRequest) -> CorrelationRespo
         )
 
 
+def hrp_cache_key_builder(
+    func,
+    namespace: str = "",
+    *args,
+    **kwargs
+):
+    """
+    Custom cache key builder for HRP analyze endpoint.
+    Includes request body (tickers, dates, parameters) in cache key.
+    """
+    request = kwargs.get("request")
+    if request:
+        tickers_str = ",".join(sorted(request.tickers))
+        return f"{namespace}:{func.__name__}:{tickers_str}:{request.start_date}:{request.end_date}:{request.linkage_method}:{request.distance_metric}"
+    return f"{namespace}:{func.__name__}"
+
+
 @router.post(
     "/analyze",
     response_model=HRPResponse,
@@ -116,7 +159,11 @@ async def calculate_correlation(request: CorrelationRequest) -> CorrelationRespo
     summary="Perform Full HRP Analysis",
     description="Complete HRP analysis including correlation matrix, clustering, dendrogram, and heatmap data"
 )
-async def analyze_hrp(request: HRPRequest) -> HRPResponse:
+@cache(expire=3600, key_builder=hrp_cache_key_builder)  # Cache for 1 hour
+async def analyze_hrp(
+    request: HRPRequest,
+    provider: DataProviderInterface = Depends(get_data_provider)
+) -> HRPResponse:
     """
     Perform complete Hierarchical Risk Parity analysis.
     
@@ -154,10 +201,11 @@ async def analyze_hrp(request: HRPRequest) -> HRPResponse:
     try:
         # Step 1: Fetch data and calculate correlation matrix
         logger.info("Step 1: Fetching data and calculating correlation matrix")
-        returns, correlation_matrix, metadata = get_correlation_data(
+        returns, correlation_matrix, metadata = await get_correlation_data(
             tickers=request.tickers,
             start_date=request.start_date,
-            end_date=request.end_date
+            end_date=request.end_date,
+            provider=provider
         )
         
         logger.info(
